@@ -6,6 +6,7 @@ from rest_framework.response import Response
 
 from apps.organizations.models import Membership
 from apps.tasks.models import Task
+from apps.tasks.serializers import ActivityLogSerializer
 
 from .models import Project
 from .serializers import ProjectSerializer
@@ -94,3 +95,19 @@ class ProjectViewSet(viewsets.ModelViewSet):
             "project_name": project.name,
             "counts": result,
         })
+
+    @action(detail=True, methods=["get"], url_path="activity")
+    def activity(self, request, pk=None):
+        if not Membership.objects.filter(
+            user=request.user, organization=self.get_object().organization
+        ).exists():
+            raise NotFound()
+        from apps.tasks.models import ActivityLog
+        qs = (
+            ActivityLog.objects.filter(project_id=pk)
+            .select_related("user", "task")
+            .order_by("-created_at")
+        )
+        page = self.paginate_queryset(qs)
+        serializer = ActivityLogSerializer(page or qs, many=True)
+        return self.get_paginated_response(serializer.data) if page else Response(serializer.data)

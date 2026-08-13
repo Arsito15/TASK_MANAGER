@@ -6,7 +6,7 @@ from rest_framework import status
 from apps.accounts.models import User
 from apps.organizations.models import Organization, Membership
 from apps.projects.models import Project
-from apps.tasks.models import Task
+from apps.tasks.models import Task, ActivityLog
 
 
 class TaskPermissionTest(TestCase):
@@ -191,3 +191,95 @@ class TaskFilterTest(TestCase):
         self.assertIn("count", resp.data)
         self.assertIn("next", resp.data)
         self.assertIn("results", resp.data)
+
+
+class ActivityLogTest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.owner = User.objects.create_user(
+            username="owner", email="owner@test.com", password="StrongPass123!"
+        )
+        self.member = User.objects.create_user(
+            username="member", email="member@test.com", password="StrongPass123!"
+        )
+        self.outsider = User.objects.create_user(
+            username="outsider", email="outsider@test.com", password="StrongPass123!"
+        )
+        self.org = Organization.objects.create(name="Test Org", created_by=self.owner)
+        self.other_org = Organization.objects.create(name="Other Org", created_by=self.outsider)
+        Membership.objects.create(user=self.owner, organization=self.org, role=Membership.OWNER)
+        Membership.objects.create(user=self.member, organization=self.org, role=Membership.MEMBER)
+        Membership.objects.create(user=self.outsider, organization=self.other_org, role=Membership.OWNER)
+        self.project = Project.objects.create(
+            name="P1", organization=self.org, created_by=self.owner
+        )
+
+    def _url(self):
+        return reverse("tasks:task-list", kwargs={"project_id": self.project.id})
+
+    def _detail_url(self, task_id):
+        return reverse("tasks:task-detail", kwargs={"project_id": self.project.id, "pk": task_id})
+
+    def _status_url(self, task_id):
+        return reverse(
+            "tasks:task-change-status",
+            kwargs={"project_id": self.project.id, "pk": task_id},
+        )
+
+    def _activity_url(self):
+        return reverse("projects:project-activity", kwargs={"pk": self.project.id})
+
+    def test_create_task_logs_activity(self):
+        self.client.force_authenticate(user=self.member)
+        resp = self.client.post(self._url(), {"title": "New Task"}, format="json")
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+        log = ActivityLog.objects.get(action=ActivityLog.CREATED)
+        self.assertEqual(log.user, self.member)
+        self.assertEqual(log.task_id, resp.data["id"])
+        self.assertIn("New Task", log.detail)
+
+    def test_update_task_logs_activity(self):
+        task = Task.objects.create(title="T1", project=self.project, created_by=self.member)
+        self.client.force_authenticate(user=self.member)
+        resp = self.client.patch(self._detail_url(task.id), {"title": "Updated"}, format="json")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        log = ActivityLog.objects.get(action=ActivityLog.UPDATED)
+        self.assertEqual(log.user, self.member)
+        self.assertIn("Updated", log.detail)
+
+    def test_status_change_logs_activity(self):
+        task = Task.objects.create(title="T1", project=self.project, created_by=self.member)
+        self.client.force_authenticate(user=self.member)
+        resp = self.client.patch(self._status_url(task.id), {"status": "DONE"}, format="json")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        log = ActivityLog.objects.get(action=ActivityLog.STATUS_CHANGED)
+        self.assertEqual(log.user, self.member)
+        self.assertIn("TODO -> DONE", log.detail)
+
+    def test_delete_task_logs_activity(self):
+        task = Task.objects.create(title="T1", project=self.project, created_by=self.member)
+        self.client.force_authenticate(user=self.member)
+        resp = self.client.delete(self._detail_url(task.id))
+        self.assertEqual(resp.status_code, status.HTTP_204_NO_CONTENT)
+        log = ActivityLog.objects.get(action=ActivityLog.DELETED)
+        self.assertEqual(log.user, self.member)
+        self.assertIn("T1", log.detail)
+        self.assertIsNone(log.task)
+
+    def test_member_can_list_project_activity(self):
+        task = Task.objects.create(title="T1", project=self.project, created_by=self.owner)
+        ActivityLog.objects.create(
+            task=task, project=self.project, user=self.owner,
+            action=ActivityLog.CREATED, detail='"T1"',
+        )
+        self.client.force_authenticate(user=self.member)
+        resp = self.client.get(self._activity_url())
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data["count"], 1)
+        self.assertEqual(resp.data["results"][0]["action"], "CREATED")
+        self.assertEqual(resp.data["results"][0]["user_email"], "owner@test.com")
+
+    def test_outsider_cannot_list_project_activity(self):
+        self.client.force_authenticate(user=self.outsider)
+        resp = self.client.get(self._activity_url())
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)

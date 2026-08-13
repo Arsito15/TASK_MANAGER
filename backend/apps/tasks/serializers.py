@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 
 from apps.organizations.models import Membership
-from .models import Task
+from .models import Task, ActivityLog
 
 User = get_user_model()
 
@@ -62,3 +62,22 @@ class TaskSerializer(serializers.ModelSerializer):
 
 class TaskStatusChangeSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=Task.STATUS_CHOICES)
+
+
+class ActivityLogSerializer(serializers.ModelSerializer):
+    user_email = serializers.CharField(source="user.email", read_only=True)
+    task_title = serializers.CharField(source="task.title", read_only=True, default="")
+
+    class Meta:
+        model = ActivityLog
+        fields = (
+            "id",
+            "task",
+            "task_title",
+            "user",
+            "user_email",
+            "action",
+            "detail",
+            "created_at",
+        )
+        read_only_fields = fields

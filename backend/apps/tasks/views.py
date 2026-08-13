@@ -10,7 +10,7 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 
 from apps.organizations.models import Membership
 
-from .models import Task
+from .models import Task, ActivityLog
 from .serializers import TaskSerializer, TaskStatusChangeSerializer
 
 User = get_user_model()
@@ -68,6 +68,15 @@ class TaskViewSet(viewsets.ModelViewSet):
             user=self.request.user, organization=project.organization
         ).first()
 
+    def _log(self, task, action, detail=""):
+        ActivityLog.objects.create(
+            task=task,
+            project=task.project,
+            user=self.request.user,
+            action=action,
+            detail=detail,
+        )
+
     def perform_create(self, serializer):
         project_id = self.kwargs.get("project_id")
         if not project_id:
@@ -82,7 +91,8 @@ class TaskViewSet(viewsets.ModelViewSet):
             raise NotFound()
         if membership.role == Membership.VIEWER:
             raise PermissionDenied("VIEWER users cannot create tasks.")
-        serializer.save(project=project, created_by=self.request.user)
+        task = serializer.save(project=project, created_by=self.request.user)
+        self._log(task, ActivityLog.CREATED, f'"{task.title}"')
 
     def perform_update(self, serializer):
         task = serializer.instance
@@ -95,7 +105,8 @@ class TaskViewSet(viewsets.ModelViewSet):
             raise PermissionDenied(
                 "Only the task creator or an ADMIN/OWNER can edit this task."
             )
-        serializer.save()
+        task = serializer.save()
+        self._log(task, ActivityLog.UPDATED, f'"{task.title}"')
 
     def perform_destroy(self, instance):
         membership = self._get_membership(instance.project)
@@ -107,6 +118,7 @@ class TaskViewSet(viewsets.ModelViewSet):
             raise PermissionDenied(
                 "Only the task creator or an ADMIN/OWNER can delete this task."
             )
+        self._log(instance, ActivityLog.DELETED, f'"{instance.title}"')
         instance.delete()
 
     @action(detail=True, methods=["patch"], url_path="change-status")
@@ -124,6 +136,13 @@ class TaskViewSet(viewsets.ModelViewSet):
             raise PermissionDenied(
                 "Only the task creator, assignee, or an ADMIN/OWNER can change the status."
             )
-        task.status = serializer.validated_data["status"]
+        old_status = task.status
+        new_status = serializer.validated_data["status"]
+        task.status = new_status
         task.save(update_fields=["status", "updated_at"])
+        self._log(
+            task,
+            ActivityLog.STATUS_CHANGED,
+            f"{old_status} -> {new_status}",
+        )
         return Response(TaskSerializer(task, context=self.get_serializer_context()).data)

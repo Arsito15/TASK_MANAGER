@@ -1,5 +1,14 @@
-from django.urls import path
+from django.urls import path, include
+from rest_framework.routers import SimpleRouter
 
-app_name = 'projects'
+from .views import ProjectViewSet
 
-urlpatterns = []
+app_name = "projects"
+
+project_router = SimpleRouter()
+project_router.register(r"projects", ProjectViewSet, basename="project")
+
+urlpatterns = [
+    path("organizations/<slug:org_slug>/", include(project_router.urls)),
+    path("", include(project_router.urls)),
+]

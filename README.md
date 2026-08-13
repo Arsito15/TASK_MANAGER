@@ -68,6 +68,36 @@ npm run dev
 
 The frontend will be available at `http://localhost:5173`.
 
+### Docker (recommended)
+
+Both services can be run together with a single command using Docker Compose and the provided Makefile:
+
+```bash
+# Build and start both containers (backend + frontend)
+make up
+
+# View logs
+make logs
+
+# Run backend tests inside the container
+make test
+
+# Create a Django superuser
+make superuser
+
+# Stop everything
+make down
+
+# Full reset (removes containers + volumes)
+make clean
+```
+
+This spins up:
+- **Backend** at `http://localhost:8000` (auto-runs migrations on startup)
+- **Frontend** at `http://localhost:5173`
+
+SQLite data persists in a Docker named volume (`backend-data`).
+
 ### Environment Variables
 
 **Backend** (``backend/.env``):
@@ -79,8 +109,9 @@ The frontend will be available at `http://localhost:5173`.
 | `CORS_ALLOWED_ORIGINS` | http://localhost:5173 | CORS origins |
 | `SIMPLE_JWT_ACCESS_TOKEN_LIFETIME_MINUTES` | 15 | Access token TTL |
 | `SIMPLE_JWT_REFRESH_TOKEN_LIFETIME_DAYS` | 7 | Refresh token TTL |
-| `DRF_THROTTLE_ANON` | 5/min | Anonymous rate limit |
-| `DRF_THROTTLE_USER` | 30/min | Authenticated rate limit |
+| `DRF_THROTTLE_ANON` | 30/min | Anonymous rate limit |
+| `DRF_THROTTLE_USER` | 120/min | Authenticated rate limit |
+| `DB_PATH` | db.sqlite3 (local) / /app/data/db.sqlite3 (Docker) | SQLite database path |
 
 **Frontend** (``frontend/.env``):
 | Variable | Default | Description |
@@ -176,6 +207,10 @@ src/
 
 **No UI libraries.** All components are hand-built with CSS variables and vanilla CSS. `react-router-dom` is the only non-React dependency.
 
+### Activity Log (extra)
+
+An `ActivityLog` model records every mutation on tasks: `CREATED`, `UPDATED`, `STATUS_CHANGED`, `DELETED`. Logs are written explicitly in `TaskViewSet`'s `perform_create/perform_update/perform_destroy/change_status` (not via signals — explicit is easier to read and test). The `task` FK uses `on_delete=SET_NULL` so logs survive after a task is deleted, preserving the audit trail. The `GET /api/projects/{id}/activity/` endpoint lists a project's timeline, filtered by org membership and paginated. There is no UI for it yet (see "What I'd Do Differently").
+
 ---
 
 ## 4. Trade-offs
@@ -212,7 +247,7 @@ The spec says "no microservices." A monolith is the right choice for this scope:
 
 **Priority 3:** **Real-time notifications via WebSocket (Django Channels).** When a task's status changes or a user is assigned, notify all org members in real time. This would require adding Channels, Redis as a channel layer, and a WebSocket client in the frontend.
 
-**Priority 4:** **Activity log UI.** The backend already has the `summary` endpoint and the data model supports an activity log. I'd add a timeline view in the project detail page showing recent changes (task created, status changed, reassigned).
+**Priority 4:** **Activity log UI.** The backend now has the `GET /api/projects/{id}/activity/` endpoint and the `ActivityLog` model (implemented). I'd add a timeline view in the project detail page showing recent changes (task created, status changed, reassigned).
 
 **Priority 5:** **Comprehensive frontend tests.** Add Vitest + React Testing Library tests for the UI, covering critical flows (login → create org → add member → create project → create task → change status). Currently only the backend has automated tests.
 
@@ -234,71 +269,23 @@ The spec says "no microservices." A monolith is the right choice for this scope:
 
 ### a. How would you avoid N+1 when listing tasks with assignee and project in a single response?
 
-Use `select_related` for FKs (single-value relationships) and `prefetch_related` for reverse FKs (multi-value):
-
-```python
-Task.objects.filter(project_id=pid) \
-    .select_related("assignee", "created_by", "project", "project__organization") \
-    .prefetch_related("project__organization__memberships")
-```
-
-`select_related` uses a SQL JOIN, so all data is fetched in a single query. `prefetch_related` fires a second query with `IN (...)` for the reverse relation. In the current implementation, the `TaskViewSet.get_queryset()` already uses `select_related("assignee", "created_by", "project", "project__organization")`, so listing tasks makes exactly 1 query.
+Tell the ORM to join related tables upfront instead of fetching them lazily per row. Foreign keys (assignee, project, created_by) can be fetched in a single SQL JOIN. This is already implemented in the task list endpoint — listing 20 tasks makes exactly 1 query.
 
 ### b. If the task list grows to tens of thousands per organization, what would you change?
 
-**API:**
-- Switch from offset-based to **cursor-based pagination** (DRF's `CursorPagination`). Offset pagination with `LIMIT/OFFSET` degrades at deep pages because the DB scans and discards all preceding rows. Cursor pagination uses `WHERE created_at < ?` with an index, which is O(1) regardless of depth.
-- Add **compound database indexes** on `(project_id, status)`, `(project_id, assignee_id)`, and `(project_id, created_at)` to optimize filtered+ordered queries.
-- Consider **read replicas** for the task list endpoint if the write load is high.
+Switch to cursor-based pagination (offset pagination degrades at deep pages). Add compound indexes on commonly filtered columns (project + status, project + assignee). On the frontend, replace pagination with virtualized infinite scroll and cache query results to avoid refetching on navigation.
 
-**Frontend:**
-- Replace pagination with **virtualized infinite scroll** (e.g., `react-window` or `@tanstack/react-virtual`). Only render visible rows.
-- Debounce the search input (already done) and cache filter results.
-- Use `staleTime` in a query cache (e.g., TanStack Query) to avoid refetching on every navigation.
+### c. Where would you validate "don't assign tasks to non-members" — serializer, model, signal, or domain service?
 
-### c. Where would you validate "don't assign tasks to non-members": serializer, model, signal, or domain service, and why?
+In the serializer (where it's implemented). It has request context, can return a clean field-level error, and integrates naturally with DRF's validation pipeline. The model's clean() isn't called by DRF, signals fire on every save and are hard to test, and a domain service adds indirection without benefit at this scale.
 
-**In the serializer** (which is where it's implemented now). Rationale:
+### d. A plausible race condition and how you'd mitigate it.
 
-- **Serializer:** Has access to both the request context (`self.context["request"]`, `self.context["project"]`) and can return a 400 JSON response with a clear field-level error. This is the right layer for API input validation because it integrates naturally with DRF's validation pipeline.
-- **Model (`clean()`):** Would work, but `clean()` is not called automatically on `save()` unless you call `full_clean()`, and DRF doesn't call it by default. It also doesn't have request context, making it harder to determine which org the task belongs to.
-- **Signal (`pre_save`):** Fires on every save, including management commands and data migrations. It's invisible and hard to test. It also throws exceptions, which the API layer would need to catch and format — pushing presentation logic into model-layer code.
-- **Domain service:** Overkill for this scope. A service layer adds indirection without benefit in a CRUD-style app where the serializer already has full context.
+Two users open the same task. A changes the title, B changes the status. B's request sends stale data and silently overwrites A's change. Fix: optimistic locking — the client sends the `updated_at` it loaded, the server rejects if it doesn't match (409 Conflict). The loser gets a clear "refresh and try again" error instead of a silent overwrite.
 
-The key principle: validate at the **boundary** (serializer/API) where you have both input context and can produce user-friendly errors. Reserve model-level validation for invariants that must hold regardless of how the model is accessed.
+### e. If real-time notifications were needed tomorrow, what would you touch first?
 
-### d. A plausible race condition (two users editing the same task) and how you'd mitigate it at the middleware level.
-
-**Scenario:** User A and User B both open Task #42. User A changes the title to "Fix login bug" and saves. User B (who loaded the page before A's save) changes the status to "DONE" and saves. User B's PATCH overwrites the title back to the old value because B's payload was constructed from stale data.
-
-**Mitigation with optimistic locking:**
-
-Add an `updated_at` (or a dedicated `version` integer) to the `Task` model. The client sends the `updated_at` it loaded in an `If-Match` header (or as `expected_updated_at` in the body). The view checks:
-
-```python
-class TaskViewSet(ModelViewSet):
-    def perform_update(self, serializer):
-        expected = self.request.headers.get("If-Match")
-        if expected and str(serializer.instance.updated_at.isoformat()) != expected:
-            raise Conflict("This task was modified by another user. Please refresh.")
-        serializer.save()
-```
-
-The DB-level query would be: `UPDATE tasks SET ... WHERE id = ? AND updated_at = ?`, and if `affected_rows == 0`, return 409 Conflict. This ensures no silent overwrites and the loser gets a clear error.
-
-For a more robust solution, use `SELECT ... FOR UPDATE` inside a transaction to serialize concurrent writes, but optimistic locking is usually sufficient for UI-driven edits.
-
-### e. If real-time notifications were needed tomorrow, what piece would you touch first and what would you leave out of scope initially?
-
-**Touch first:**
-- **Backend:** Add `djangochannels` (ASGI) and a Redis channel layer. Create a consumer that authenticates the WebSocket with the JWT and subscribes the user to a group named `org-{org_slug}`. When a task is created/updated/deleted, send a message to the org's group from within the viewset (e.g., `async_to_sync(channel_layer.group_send)(...)`). The message contains the task ID, action type, and a minimal payload.
-- **Frontend:** Add a WebSocket client in `AuthContext` (or a dedicated `RealtimeContext`) that connects on login and dispatches events to update the task list in-place. No re-fetch needed — just patch the local state.
-
-**Leave out of scope initially:**
-- **Presence indicators** ("User is typing..."). Adds complexity (debouncing, heartbeats) but little value for a task manager.
-- **Push notifications (mobile/browser).** Requires service workers and permission flows; not needed for an MVP.
-- **Multi-user cursors or field-level locks.** Operational-transform/CRDT-level complexity; wait until the app proves it needs this.
-- **Message persistence/history.** Store events in the activity log (which already exists), but don't build a full chat backend. The WebSocket is ephemeral; the activity log is the source of truth.
+Start with Django Channels + Redis on the backend, pushing events to an org group on task changes. On the frontend, open a WebSocket on login that patches the task list in place. Leave out: presence indicators, browser push notifications, multi-user cursors — those add complexity without value for a task manager. The activity log already serves as the persistent record.
 
 ---
 
@@ -325,6 +312,7 @@ For a more robust solution, use `SELECT ... FOR UPDATE` inside a transaction to 
 | PATCH | `/api/projects/{id}/` | Org admin |
 | DELETE | `/api/projects/{id}/` | Org admin |
 | GET | `/api/projects/{id}/summary/` | Org member |
+| GET | `/api/projects/{id}/activity/` | Org member |
 | GET | `/api/projects/{id}/tasks/` | Org member |
 | POST | `/api/projects/{id}/tasks/` | Member+ (not Viewer) |
 | GET | `/api/tasks/{id}/` | Org member |
@@ -334,12 +322,13 @@ For a more robust solution, use `SELECT ... FOR UPDATE` inside a transaction to 
 
 ## Tests
 
-40 backend tests covering:
+46 backend tests covering:
 - Auth: registration, duplicate email, password mismatch, login, me endpoint
 - Organization permissions: cross-org visibility, member vs admin, auto-owner on creation
 - Membership: admin-only management, cannot demote owner, cannot remove last owner
 - Project permissions: member/viewer cannot create, admin/owner can, outsider blocked
 - Task permissions: viewer cannot create, assignee validation, creator-only edit, status change rules
 - Task filters: by status, by priority, search by title, pagination metadata
+- Activity log: create/update/status-change/delete generate logs, member can list, outsider blocked
 
 Run tests: `cd backend && python manage.py test`

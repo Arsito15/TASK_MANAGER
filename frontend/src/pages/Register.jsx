@@ -49,9 +49,10 @@ export default function Register() {
   };
 
   return (
-    <div style={{ maxWidth: 400, margin: "4rem auto", padding: "0 1rem" }}>
-      <div className="card">
-        <h1 style={{ fontSize: "1.5rem", marginBottom: "1.5rem" }}>Create Account</h1>
+    <div className="auth-container">
+      <div className="auth-card">
+        <h1 className="auth-title">Create your account</h1>
+        <p className="auth-subtitle">Get started with task management for your team.</p>
         <ErrorBanner error={errors.general} />
         <form onSubmit={handleSubmit}>
           <div className="form-group">
@@ -62,6 +63,7 @@ export default function Register() {
               value={form.username}
               onChange={handleChange}
               required
+              autoFocus
             />
             {errors.username && <div className="form-error">{errors.username}</div>}
           </div>
@@ -98,12 +100,12 @@ export default function Register() {
             />
             {errors.password2 && <div className="form-error">{errors.password2}</div>}
           </div>
-          <button type="submit" className="btn-primary" style={{ width: "100%" }} disabled={submitting}>
-            {submitting ? "Creating account..." : "Register"}
+          <button type="submit" className="btn-primary" style={{ width: "100%", marginTop: "0.5rem" }} disabled={submitting}>
+            {submitting ? "Creating account…" : "Register"}
           </button>
         </form>
-        <p style={{ marginTop: "1rem", textAlign: "center", fontSize: "0.9rem" }}>
-          Already have an account? <Link to="/login">Sign In</Link>
+        <p style={{ marginTop: "1.5rem", textAlign: "center", fontSize: "0.85rem", color: "var(--color-text-muted)" }}>
+          Already have an account? <Link to="/login">Sign in</Link>
         </p>
       </div>
     </div>

@@ -20,16 +20,17 @@ export default function Login() {
       await login(email, password);
       navigate("/");
     } catch (err) {
-      setError(err.data?.detail || "Login failed. Check your credentials.");
+      setError(err.data?.detail || "Invalid email or password.");
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <div style={{ maxWidth: 400, margin: "4rem auto", padding: "0 1rem" }}>
-      <div className="card">
-        <h1 style={{ fontSize: "1.5rem", marginBottom: "1.5rem" }}>Sign In</h1>
+    <div className="auth-container">
+      <div className="auth-card">
+        <h1 className="auth-title">Welcome back</h1>
+        <p className="auth-subtitle">Sign in to your account to continue.</p>
         <ErrorBanner error={error} />
         <form onSubmit={handleSubmit}>
           <div className="form-group">
@@ -40,6 +41,7 @@ export default function Login() {
               onChange={(e) => setEmail(e.target.value)}
               required
               autoComplete="email"
+              autoFocus
             />
           </div>
           <div className="form-group">
@@ -52,12 +54,12 @@ export default function Login() {
               autoComplete="current-password"
             />
           </div>
-          <button type="submit" className="btn-primary" style={{ width: "100%" }} disabled={submitting}>
-            {submitting ? "Signing in..." : "Sign In"}
+          <button type="submit" className="btn-primary" style={{ width: "100%", marginTop: "0.5rem" }} disabled={submitting}>
+            {submitting ? "Signing in…" : "Sign In"}
           </button>
         </form>
-        <p style={{ marginTop: "1rem", textAlign: "center", fontSize: "0.9rem" }}>
-          Don't have an account? <Link to="/register">Register</Link>
+        <p style={{ marginTop: "1.5rem", textAlign: "center", fontSize: "0.85rem", color: "var(--color-text-muted)" }}>
+          Don't have an account? <Link to="/register">Create one</Link>
         </p>
       </div>
     </div>

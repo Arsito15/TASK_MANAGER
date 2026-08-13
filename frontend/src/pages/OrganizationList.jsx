@@ -36,7 +36,7 @@ export default function OrganizationList() {
     setCreating(true);
     try {
       const newOrg = await createOrganization(newOrgName);
-      setOrgs([...orgs, newOrg]);
+      setOrgs([newOrg, ...orgs]);
       setNewOrgName("");
       setShowForm(false);
     } catch (err) {
@@ -49,9 +49,16 @@ export default function OrganizationList() {
   return (
     <Layout>
       <div className="page-header">
-        <h1 style={{ fontSize: "1.5rem" }}>My Organizations</h1>
+        <div>
+          <h1 style={{ fontSize: "1.75rem", fontWeight: 600, fontFamily: "var(--font-serif)", letterSpacing: "-0.02em" }}>
+            My Organizations
+          </h1>
+          <p style={{ fontSize: "0.875rem", color: "var(--color-text-muted)", marginTop: "0.25rem" }}>
+            Organizations you belong to.
+          </p>
+        </div>
         <button className="btn-primary" onClick={() => setShowForm(!showForm)}>
-          {showForm ? "Cancel" : "New Organization"}
+          {showForm ? "Cancel" : "+ New Organization"}
         </button>
       </div>
 
@@ -63,11 +70,13 @@ export default function OrganizationList() {
               type="text"
               value={newOrgName}
               onChange={(e) => setNewOrgName(e.target.value)}
+              placeholder="e.g. Acme Inc."
               required
+              autoFocus
             />
           </div>
           <button type="submit" className="btn-primary" disabled={creating}>
-            {creating ? "Creating..." : "Create"}
+            {creating ? "Creating…" : "Create Organization"}
           </button>
         </form>
       )}
@@ -86,21 +95,28 @@ export default function OrganizationList() {
           }
         />
       ) : (
-        <div style={{ display: "grid", gap: "0.75rem" }}>
+        <div style={{ display: "grid", gap: "0.5rem" }}>
           {orgs.map((org) => (
             <Link
               key={org.id}
               to={`/orgs/${org.slug}`}
-              className="card"
-              style={{ textDecoration: "none", color: "inherit", display: "flex", justifyContent: "space-between", alignItems: "center" }}
+              className="card card-hover"
+              style={{
+                textDecoration: "none",
+                color: "inherit",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                padding: "1rem 1.25rem",
+              }}
             >
               <div>
-                <div style={{ fontWeight: 600 }}>{org.name}</div>
-                <div style={{ fontSize: "0.85rem", color: "var(--color-text-muted)" }}>
+                <div style={{ fontWeight: 600, fontSize: "0.95rem" }}>{org.name}</div>
+                <div style={{ fontSize: "0.8rem", color: "var(--color-text-muted)", marginTop: "0.2rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
                   Your role: <span className={`badge badge-${org.my_role}`}>{org.my_role}</span>
                 </div>
               </div>
-              <span style={{ color: "var(--color-primary)" }}>&rarr;</span>
+              <span style={{ color: "var(--color-text-muted)", fontSize: "1.1rem" }}>&rarr;</span>
             </Link>
           ))}
         </div>

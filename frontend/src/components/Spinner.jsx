@@ -1,7 +1,8 @@
 export default function Spinner() {
   return (
-    <div style={{ textAlign: "center", padding: "2rem", color: "var(--color-text-muted)" }}>
-      Loading...
+    <div className="spinner-container">
+      <div className="spinner" />
+      <span>Loading…</span>
     </div>
   );
 }

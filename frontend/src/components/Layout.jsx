@@ -11,28 +11,20 @@ export default function Layout({ children }) {
     navigate("/login");
   };
 
+  const initials = user?.email ? user.email.slice(0, 2).toUpperCase() : "?";
+
   return (
     <div>
-      <header
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          padding: "0.75rem 1.5rem",
-          background: "var(--color-surface)",
-          borderBottom: "1px solid var(--color-border)",
-          marginBottom: "1.5rem",
-        }}
-      >
-        <Link to="/" style={{ fontWeight: 700, fontSize: "1.1rem", textDecoration: "none" }}>
+      <header className="app-header">
+        <Link to="/" className="app-logo">
+          <span className="app-logo-icon">T</span>
           TaskManager
         </Link>
         {user && (
-          <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
-            <span style={{ color: "var(--color-text-muted)", fontSize: "0.9rem" }}>
-              {user.email}
-            </span>
-            <button className="btn-secondary" onClick={handleLogout}>
+          <div className="user-chip">
+            <span className="user-email">{user.email}</span>
+            <div className="user-avatar">{initials}</div>
+            <button className="btn-secondary" onClick={handleLogout} style={{ marginLeft: "0.5rem" }}>
               Logout
             </button>
           </div>

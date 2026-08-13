@@ -1,4 +1,5 @@
 from django.contrib.auth import get_user_model
+from django.db import transaction
 from rest_framework import serializers
 
 from .models import Organization, Membership
@@ -22,6 +23,7 @@ class OrganizationSerializer(serializers.ModelSerializer):
         membership = obj.memberships.filter(user=request.user).first()
         return membership.role if membership else None
 
+    @transaction.atomic
     def create(self, validated_data):
         request = self.context["request"]
         org = Organization.objects.create(created_by=request.user, **validated_data)

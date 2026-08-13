@@ -1,6 +1,4 @@
-from django.contrib.auth import get_user_model
-from django.db.models import Q
-from rest_framework import viewsets, mixins, status
+from rest_framework import viewsets, mixins
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -9,8 +7,6 @@ from rest_framework.exceptions import PermissionDenied
 from .models import Organization, Membership
 from .serializers import OrganizationSerializer, MembershipSerializer
 from .permissions import IsOrganizationMember, IsOrganizationAdmin
-
-User = get_user_model()
 
 
 class OrganizationViewSet(
@@ -60,8 +56,12 @@ class MembershipViewSet(
     def get_queryset(self):
         org_slug = self.kwargs.get("org_slug")
         return (
-            Membership.objects.filter(organization__slug=org_slug)
+            Membership.objects.filter(
+                organization__slug=org_slug,
+                organization__memberships__user=self.request.user,
+            )
             .select_related("user")
+            .distinct()
             .order_by("-joined_at")
         )
 
@@ -73,8 +73,12 @@ class MembershipViewSet(
     def get_serializer_context(self):
         ctx = super().get_serializer_context()
         org_slug = self.kwargs.get("org_slug")
-        org = Organization.objects.get(slug=org_slug)
-        ctx["organization"] = org
+        if org_slug:
+            try:
+                ctx["organization"] = Organization.objects.get(slug=org_slug)
+            except Organization.DoesNotExist:
+                from rest_framework.exceptions import NotFound
+                raise NotFound("Organization not found.")
         return ctx
 
     def perform_create(self, serializer):

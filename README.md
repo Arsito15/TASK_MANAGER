@@ -13,6 +13,40 @@ A full-stack task management application with multi-organization support, role-b
 
 ---
 
+## Screenshots
+
+### Sign In
+![Sign In](docs/screenshots/1.signin.png)
+
+### Create Account
+![Create Account](docs/screenshots/2.createaccount.png)
+
+### Main Page (Organization List)
+![Main Page](docs/screenshots/3.mainpage.png)
+
+### Create Organization
+![Create Organization](docs/screenshots/4.createorganization.png)
+
+### Organization View (Projects + Members)
+![Organization View](docs/screenshots/5.organizationview.png)
+
+### Create Project
+![Create Project](docs/screenshots/6.newproject.png)
+
+### Create Task
+![Create Task](docs/screenshots/7.newtask.png)
+
+### Task List with Filters & Summary
+![Task List](docs/screenshots/8.tasksview.png)
+
+### Add Member
+![Add Member](docs/screenshots/9.addmember.png)
+
+### Members View (Roles)
+![Members View](docs/screenshots/10.membersview.png)
+
+---
+
 ## 1. How to Run
 
 ### Prerequisites
@@ -165,51 +199,44 @@ Task
 
 ## 3. Technical Decisions
 
-### Authentication: JWT with SimpleJWT
+### Authentication
 
-**Choice:** JWT (access + refresh tokens) via `djangorestframework-simplejwt`, with token blacklist on logout.
+I went with JWT through SimpleJWT. The frontend and backend live on different ports during development, so a stateless token avoids the cookie/CORS headache entirely. The access token lasts 15 minutes and the refresh token gets rotated on each refresh. On logout, the refresh token is blacklisted server-side so it can't be reused.
 
-**Rationale:** The frontend is a SPA on a separate origin (Vite dev server at :5173, API at :8000). JWT is stateless and works cleanly with CORS without needing a cookie-based session. The access token is short-lived (15 min) and the refresh token is rotated on each refresh. The blacklist app ensures that refresh tokens used for logout are invalidated server-side.
+I also considered DRF's built-in Token auth — it's simpler (one token, no refresh), but it hits the database on every request and doesn't let you control token lifetime. For a SPA that can refresh transparently in the background, JWT felt like the better fit.
 
-**Alternative considered:** DRF's built-in Token auth. Simpler (single token per user, no refresh needed), but it requires a DB lookup on every request and doesn't support fine-grained token lifecycle. For a SPA with transparent refresh, JWT is the better fit.
+### Roles
 
-### Roles: Enum Field on Membership
+Four roles (OWNER, ADMIN, MEMBER, VIEWER) stored as a simple choice field on the Membership model. With only four options, a separate Role model or a permissions bitfield would be over-engineering. A unique constraint on (user, organization) ensures nobody joins the same org twice.
 
-**Choice:** A `role` CharField with 4 choices on the `Membership` model, enforced through permission classes and `perform_*` methods.
-
-**Rationale:** 4 roles don't justify a separate Role model or a permissions bitfield. The `unique_together(user, organization)` constraint ensures one membership per user per org. Role checks are done both at the view level (permission_classes) and the object level (in `perform_create/update/destroy` and `get_queryset`).
+Role checks happen in two places: the permission class (is this user even allowed to hit this endpoint?) and inside each view's create/update/delete logic (does this specific action require admin?). Keeping both means the permission class blocks unauthorized calls early, and the in-view check handles the finer rules like "only the task's creator or an admin can edit it."
 
 ### ViewSets vs API Views
 
-- **Organizations/Members/Projects/Tasks:** ViewSets with explicit mixins. DRF's router generates clean nested URLs (`/organizations/{slug}/members/`). Using `SimpleRouter` instead of `DefaultRouter` avoids the root API view conflicting with organization detail URLs.
-- **Auth (register/login/me/logout):** `APIView`/`generics.CreateAPIView`. Auth endpoints have non-standard response shapes (tokens vs user objects) and benefit from explicit control over the response structure.
+For organizations, members, projects, and tasks I used ViewSets — the CRUD patterns are identical and DRF's router generates clean nested URLs automatically. I picked SimpleRouter over DefaultRouter because the latter generates a root view that conflicts with the organization detail endpoint.
+
+Auth endpoints (register, login, me, logout) are plain API views instead. They return different response shapes — sometimes tokens, sometimes user data — and that kind of thing is easier to control with an explicit view than fighting the ViewSet serializer flow.
 
 ### Permission Strategy
 
-Permissions are enforced at **three layers**:
-
-1. **Queryset-level (`get_queryset`):** `OrganizationViewSet.get_queryset()` filters to only orgs where the user has a `Membership`. `TaskViewSet` and `ProjectViewSet` filter by org membership. This prevents cross-organization data leakage — even if a user guesses an ID, the queryset won't include it, returning 404.
-
-2. **View-level (`permission_classes`):** `IsAuthenticated` on all endpoints. `IsOrganizationAdmin` for member-management endpoints.
-
-3. **Object-level (`perform_*`):** In each viewset's `perform_create`, `perform_update`, `perform_destroy`, the user's role is checked against the business rules before allowing the action. This catches cases where queryset filtering alone isn't enough (e.g., a MEMBER trying to create a project in an org they belong to but don't have admin rights for).
+Permissions are checked at three levels. First, the queryset: every list/retrieve filters to only the orgs and projects the user belongs to, so even if someone guesses an ID from another organization, the database simply returns 404 — the row is invisible, not forbidden. Second, the permission class: all endpoints require authentication, and member-management endpoints require admin. Third, inside each create/update/destroy: the user's role is checked against the business rules (e.g., a MEMBER can't create projects, only tasks). This catches things the queryset can't — like a member who legitimately belongs to the org but shouldn't have admin powers.
 
 ### Frontend Architecture
 
 ```
 src/
-├── api/         — Centralized HTTP client (client.js) + per-domain modules
-├── context/     — AuthContext (session state, login/logout/refreshUser)
-├── components/  — Reusable UI (Layout, Spinner, ErrorBanner, EmptyState, ConfirmDialog, Pagination)
-├── pages/       — Route-level pages (Login, Register, OrganizationList, OrganizationDetail, ProjectDetail, NotFound)
-└── styles/      — Global CSS (single file, CSS variables for theming)
+├── api/         — HTTP client + per-domain modules
+├── context/     — AuthContext (session, login/logout)
+├── components/  — Layout, Spinner, ConfirmDialog, Pagination, etc.
+├── pages/       — Login, Register, OrganizationList, OrganizationDetail, ProjectDetail
+└── styles/      — Single global CSS file with variables
 ```
 
-**No UI libraries.** All components are hand-built with CSS variables and vanilla CSS. `react-router-dom` is the only non-React dependency.
+No UI component libraries. Everything is hand-built with vanilla CSS and CSS variables for theming. React Router is the only non-React dependency.
 
-### Activity Log (extra)
+### Activity Log
 
-An `ActivityLog` model records every mutation on tasks: `CREATED`, `UPDATED`, `STATUS_CHANGED`, `DELETED`. Logs are written explicitly in `TaskViewSet`'s `perform_create/perform_update/perform_destroy/change_status` (not via signals — explicit is easier to read and test). The `task` FK uses `on_delete=SET_NULL` so logs survive after a task is deleted, preserving the audit trail. The `GET /api/projects/{id}/activity/` endpoint lists a project's timeline, filtered by org membership and paginated. There is no UI for it yet (see "What I'd Do Differently").
+A separate model records every task mutation (created, updated, status changed, deleted). I write these logs explicitly in the view rather than using Django signals — it's easier to read, easier to test, and I control exactly when a log gets created. The task foreign key uses SET_NULL on deletion, so even after a task is removed, its history sticks around. There's a paginated endpoint to list a project's timeline, but no UI for it yet — that's in the "what I'd do differently" section.
 
 ---
 

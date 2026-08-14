@@ -64,6 +64,64 @@ API available at `http://localhost:8000/api/`.
 
 Run tests: `python manage.py test` (46 tests) or `make test` (Docker).
 
+## API endpoints
+
+### Auth
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/auth/register/` | Register (email, password) |
+| POST | `/api/auth/login/` | Login (returns JWT access + refresh) |
+| POST | `/api/auth/token/refresh/` | Refresh access token |
+| POST | `/api/auth/logout/` | Blacklist refresh token |
+| GET | `/api/auth/me/` | Current user profile |
+
+### Organizations
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/organizations/` | List user's organizations |
+| POST | `/api/organizations/` | Create organization (creator becomes OWNER) |
+| GET | `/api/organizations/{slug}/` | Retrieve organization |
+| PUT | `/api/organizations/{slug}/` | Update organization (ADMIN+) |
+| PATCH | `/api/organizations/{slug}/` | Partial update (ADMIN+) |
+| DELETE | `/api/organizations/{slug}/` | Delete organization (OWNER) |
+
+### Members (nested under org)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/organizations/{slug}/members/` | List members |
+| POST | `/api/organizations/{slug}/members/` | Add member (ADMIN+) |
+| PUT | `/api/organizations/{slug}/members/{id}/` | Update member role (ADMIN+) |
+| PATCH | `/api/organizations/{slug}/members/{id}/` | Partial update role (ADMIN+) |
+| DELETE | `/api/organizations/{slug}/members/{id}/` | Remove member (ADMIN+; last owner protected) |
+
+### Projects
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/projects/` | List projects (filter by `status`, `organization`) |
+| GET | `/api/organizations/{slug}/projects/` | List projects within an org |
+| POST | `/api/organizations/{slug}/projects/` | Create project (ADMIN+) |
+| GET | `/api/projects/{id}/` | Retrieve project (includes `my_role`) |
+| PUT/PATCH | `/api/projects/{id}/` | Update project (ADMIN+) |
+| DELETE | `/api/projects/{id}/` | Delete project (ADMIN+) |
+| GET | `/api/projects/{id}/summary/` | Task counts by status (TODO, IN_PROGRESS, DONE) |
+| GET | `/api/projects/{id}/activity/` | Recent activity log entries |
+
+### Tasks
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/tasks/` | List tasks (filter by `status`, `priority`, `assignee`; search by `title`) |
+| GET | `/api/projects/{project_id}/tasks/` | List tasks within a project |
+| POST | `/api/projects/{project_id}/tasks/` | Create task (MEMBER+) |
+| GET | `/api/tasks/{id}/` | Retrieve task |
+| PUT/PATCH | `/api/tasks/{id}/` | Update task (creator or ADMIN+) |
+| DELETE | `/api/tasks/{id}/` | Delete task (creator or ADMIN+) |
+| PATCH | `/api/tasks/{id}/change-status/` | Change task status (assignee/creator or ADMIN+) |
+
 ## Permission model (3 layers)
 
 1. **Queryset-level** (`get_queryset`): filters to only orgs/projects/tasks the user belongs to — cross-org data returns 404.
